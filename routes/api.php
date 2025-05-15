@@ -12,5 +12,6 @@ Route::prefix('auth')->group(function () {
     Route::middleware('auth:sanctum')->group(function () {
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/profile', [ProfileController::class, 'index']);
+        Route::post('/auth/refresh-token', [AuthController::class, 'refreshToken']);
     });
 });

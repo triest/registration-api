@@ -2,23 +2,21 @@
 
 namespace App\Http\Controllers\Api\User;
 
-use App\Http\Controllers\Api\ValidationException;
+
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Registration\ReqistrationRequest;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
-    public function register(Request $request)
+    public function register(ReqistrationRequest $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'required|string|min:8|confirmed',
-            'gender' => 'required|string|in:man,female'
-        ]);
 
+        $validated = $request->validated();
         $user = User::create([
             'name' => $validated['name'],
             'email' => $validated['email'],
@@ -49,7 +47,7 @@ class AuthController extends Controller
             ]);
         }
 
-        $token = $user->createToken('auth_token')->plainTextToken;
+        $token = $user->createToken('auth_token',expiresAt:Carbon::now()->addSeconds(config('sanctum.expiration',500)))->plainTextToken;
 
         return response()->json([
             'access_token' => $token,
@@ -64,5 +62,27 @@ class AuthController extends Controller
         return response()->json([
             'message' => 'Logged out'
         ]);
+    }
+
+
+    public function refreshToken(Request $request)
+    {
+        // Проверяем, не просрочен ли текущий токен
+        if ($request->user()->currentAccessToken()->expires_at && $request->user()->currentAccessToken()->expires_at->isPast()) {
+            // Удаляем просроченный токен
+            $request->user()->currentAccessToken()->delete();
+
+            // Создаем новый токен
+            $newToken = $request->user()->createToken('auth_token', ['*'], now()->addMinutes(config('sanctum.expiration')))->plainTextToken;
+
+            return response()->json([
+                'access_token' => $newToken,
+                'token_type' => 'Bearer',
+                'expires_in' => config('sanctum.expiration') * 60, // В секундах
+            ]);
+        }
+
+        // Если токен еще активен, возвращаем ошибку
+        return response()->json(['message' => 'Token is still valid'], 400);
     }
 }
