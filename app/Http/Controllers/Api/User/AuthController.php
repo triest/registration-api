@@ -5,10 +5,15 @@ namespace App\Http\Controllers\Api\User;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Registration\ReqistrationRequest;
+use App\Http\Requests\ResetPasswordRequest;
+use App\Http\Requests\SetNewPasswordRequest;
 use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -46,7 +51,7 @@ class AuthController extends Controller
             ]);
         }
 
-        $token = $user->createToken('auth_token',expiresAt:Carbon::now()->addSeconds(config('sanctum.expiration',500)))->plainTextToken;
+        $token = $user->createToken('auth_token', expiresAt: Carbon::now()->addSeconds(config('sanctum.expiration', 500)))->plainTextToken;
 
         return response()->json([
             'access_token' => $token,
@@ -63,15 +68,12 @@ class AuthController extends Controller
         ]);
     }
 
-
     public function refreshToken(Request $request)
     {
-        // Проверяем, не просрочен ли текущий токен
-        if ($request->user()->currentAccessToken()->expires_at && $request->user()->currentAccessToken()->expires_at->isPast()) {
-            // Удаляем просроченный токен
+        if ($request->user()->currentAccessToken()) {
+
             $request->user()->currentAccessToken()->delete();
 
-            // Создаем новый токен
             $newToken = $request->user()->createToken('auth_token', ['*'], now()->addMinutes(config('sanctum.expiration')))->plainTextToken;
 
             return response()->json([
@@ -79,9 +81,51 @@ class AuthController extends Controller
                 'token_type' => 'Bearer',
                 'expires_in' => config('sanctum.expiration') * 60, // В секундах
             ]);
+        } else {
+            return response()->json(['message' => 'user not found']);
         }
 
-        // Если токен еще активен, возвращаем ошибку
-        return response()->json(['message' => 'Token is still valid'], 400);
+    }
+
+
+    public function resetPassword(ResetPasswordRequest $request)
+    {
+        $user = User::query()->where('email', $request->email)->first();
+
+        if (!$user) {
+            throw ValidationException::withMessages(['user not found']);
+        }
+
+
+        $status = Password::sendResetLink(
+            $request->only('email')
+        );
+
+        return $status === Password::RESET_LINK_SENT
+            ? back()->with(['status' => __($status)])
+            : back()->withErrors(['email' => __($status)]);
+
+    }
+
+
+    public function setNewPassword(SetNewPasswordRequest $request)
+    {
+        $status = Password::reset(
+            $request->only('email', 'password', 'password_confirmation', 'token'),
+            function (User $user, string $password) {
+                $user->forceFill([
+                    'password' => Hash::make($password)
+                ])->setRememberToken(Str::random(60));
+
+                $user->save();
+
+                event(new PasswordReset($user));
+            }
+        );
+
+        return $status === Password::PASSWORD_RESET
+            ? response()->json(['message' => __($status)])
+            : response()->json(['error' => __($status)], 400);
+
     }
 }
